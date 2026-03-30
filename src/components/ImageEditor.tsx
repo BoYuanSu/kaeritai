@@ -151,7 +151,7 @@ export default function ImageEditor() {
                     cropWidth / 2, cropHeight / 2, 0,
                     cropWidth / 2, cropHeight / 2, Math.min(cropWidth, cropHeight) / 2
                 );
-                gradient.addColorStop(0, 'rgba(0,0,0,1)');
+                gradient.addColorStop(0, `rgba(0,0,0,${overlayOpacity})`);
                 gradient.addColorStop(1, 'rgba(0,0,0,0)');
                 offCtx.globalCompositeOperation = 'destination-in';
                 offCtx.fillStyle = gradient;
