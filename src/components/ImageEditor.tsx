@@ -44,7 +44,6 @@ export default function ImageEditor() {
     const [maskShape, setMaskShape] = useState<ShapeMask>('none');
     const [gradientMask, setGradientMask] = useState<boolean>(false);
     const [isDragging, setIsDragging] = useState(false);
-    const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
     const [isBgConverting, setIsBgConverting] = useState<boolean>(false);
     const [isOverlayConverting, setIsOverlayConverting] = useState<boolean>(false);
 
@@ -55,6 +54,13 @@ export default function ImageEditor() {
     const overlayImgRef = useRef<HTMLImageElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const activePointerIdRef = useRef<number | null>(null);
+    const dragStartPosRef = useRef({ x: 0, y: 0 });
+    const pendingDragPositionRef = useRef<{ x: number; y: number } | null>(null);
+    const dragRafRef = useRef<number | null>(null);
+    const gradientMaskCacheRef = useRef<{ key: string | null; canvas: HTMLCanvasElement | null }>({
+        key: null,
+        canvas: null,
+    });
 
     const onBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -76,6 +82,7 @@ export default function ImageEditor() {
                 if (overlaySrc) URL.revokeObjectURL(overlaySrc);
                 setOverlaySrc(URL.createObjectURL(convertedFile));
                 setOverlayTransform({ x: 0, y: 0, scale: 1 });
+                gradientMaskCacheRef.current = { key: null, canvas: null };
                 setIsOverlayConverting(false);
             });
         }
@@ -142,15 +149,32 @@ export default function ImageEditor() {
             // Determine the source to draw (raw or shape-aware gradient-masked off-screen)
             let drawSource: CanvasImageSource = overlayImg;
             if (gradientMask) {
-                drawSource = createGradientMaskedOverlayCanvas(
-                    overlayImg,
+                const cacheKey = [
+                    overlaySrc,
                     cropX,
                     cropY,
                     cropWidth,
                     cropHeight,
                     maskShape,
-                    overlayOpacity
-                );
+                    overlayOpacity,
+                ].join('|');
+
+                if (gradientMaskCacheRef.current.key !== cacheKey || !gradientMaskCacheRef.current.canvas) {
+                    gradientMaskCacheRef.current = {
+                        key: cacheKey,
+                        canvas: createGradientMaskedOverlayCanvas(
+                            overlayImg,
+                            cropX,
+                            cropY,
+                            cropWidth,
+                            cropHeight,
+                            maskShape,
+                            overlayOpacity
+                        ),
+                    };
+                }
+
+                drawSource = gradientMaskCacheRef.current.canvas ?? overlayImg;
             }
 
             ctx.save();
@@ -183,11 +207,19 @@ export default function ImageEditor() {
             }
             ctx.restore();
         }
-    }, [completedCrop, overlayOpacity, maskShape, gradientMask, getOverlayDrawMetrics]);
+    }, [completedCrop, overlayOpacity, maskShape, gradientMask, getOverlayDrawMetrics, overlaySrc]);
 
     useEffect(() => {
         renderCanvas();
     }, [renderCanvas]);
+
+    useEffect(() => {
+        return () => {
+            if (dragRafRef.current !== null) {
+                cancelAnimationFrame(dragRafRef.current);
+            }
+        };
+    }, []);
 
     const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
         if (!completedCrop || !overlaySrc || !canvasRef.current) return;
@@ -210,10 +242,10 @@ export default function ImageEditor() {
         if (clickX >= destX && clickX <= destX + destWidth &&
             clickY >= destY && clickY <= destY + destHeight) {
             setIsDragging(true);
-            setDragStartPos({
+            dragStartPosRef.current = {
                 x: clickX - canvas.width / 2 - overlayTransform.x,
                 y: clickY - canvas.height / 2 - overlayTransform.y,
-            });
+            };
             activePointerIdRef.current = e.pointerId;
             canvas.setPointerCapture(e.pointerId);
             e.stopPropagation();
@@ -229,12 +261,28 @@ export default function ImageEditor() {
         
         const currentX = (e.clientX - rect.left) * scaleX;
         const currentY = (e.clientY - rect.top) * scaleY;
-        
-        setOverlayTransform((prev) => ({
-            ...prev,
-            x: currentX - canvas.width / 2 - dragStartPos.x,
-            y: currentY - canvas.height / 2 - dragStartPos.y,
-        }));
+
+        pendingDragPositionRef.current = {
+            x: currentX - canvas.width / 2 - dragStartPosRef.current.x,
+            y: currentY - canvas.height / 2 - dragStartPosRef.current.y,
+        };
+
+        if (dragRafRef.current !== null) return;
+
+        dragRafRef.current = requestAnimationFrame(() => {
+            dragRafRef.current = null;
+            const nextPos = pendingDragPositionRef.current;
+            if (!nextPos) return;
+
+            setOverlayTransform((prev) => {
+                if (prev.x === nextPos.x && prev.y === nextPos.y) return prev;
+                return {
+                    ...prev,
+                    x: nextPos.x,
+                    y: nextPos.y,
+                };
+            });
+        });
     };
 
     const handleScaleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -247,6 +295,23 @@ export default function ImageEditor() {
 
     const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
         if (activePointerIdRef.current !== e.pointerId) return;
+
+        if (dragRafRef.current !== null) {
+            cancelAnimationFrame(dragRafRef.current);
+            dragRafRef.current = null;
+
+            const nextPos = pendingDragPositionRef.current;
+            if (nextPos) {
+                setOverlayTransform((prev) => ({
+                    ...prev,
+                    x: nextPos.x,
+                    y: nextPos.y,
+                }));
+            }
+        }
+
+        pendingDragPositionRef.current = null;
+
         if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
             canvasRef.current.releasePointerCapture(e.pointerId);
         }
