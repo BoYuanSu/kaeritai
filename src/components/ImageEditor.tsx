@@ -14,6 +14,8 @@ type OverlayTransform = {
 const MIN_OVERLAY_SCALE = 0.1;
 const MAX_OVERLAY_SCALE = 3;
 const OVERLAY_SCALE_STEP = 0.01;
+const MAX_EXPORT_DIMENSION = 1028;
+const EXPORT_MIME_TYPE = 'image/png';
 
 const clampScale = (value: number) => Math.min(MAX_OVERLAY_SCALE, Math.max(MIN_OVERLAY_SCALE, value));
 
@@ -325,11 +327,33 @@ export default function ImageEditor() {
         if (!canvasRef.current || !bgSrc) return;
         // Re-render before export so export and preview always use identical mask logic.
         renderCanvas();
-        const dataUrl = canvasRef.current.toDataURL('image/png');
-        const link = document.createElement('a');
-        link.download = 'composed-image.png';
-        link.href = dataUrl;
-        link.click();
+
+        const sourceCanvas = canvasRef.current;
+        const longestSide = Math.max(sourceCanvas.width, sourceCanvas.height);
+        const scale = longestSide > MAX_EXPORT_DIMENSION ? MAX_EXPORT_DIMENSION / longestSide : 1;
+
+        const exportCanvas = document.createElement('canvas');
+        exportCanvas.width = Math.max(1, Math.round(sourceCanvas.width * scale));
+        exportCanvas.height = Math.max(1, Math.round(sourceCanvas.height * scale));
+
+        const exportCtx = exportCanvas.getContext('2d');
+        if (!exportCtx) return;
+
+        exportCtx.drawImage(sourceCanvas, 0, 0, exportCanvas.width, exportCanvas.height);
+
+        exportCanvas.toBlob(
+            (blob) => {
+                if (!blob) return;
+                const link = document.createElement('a');
+                const objectUrl = URL.createObjectURL(blob);
+                link.download = 'composed-image.png';
+                link.href = objectUrl;
+                link.click();
+                URL.revokeObjectURL(objectUrl);
+            },
+            EXPORT_MIME_TYPE,
+            0.85
+        );
     };
 
     return (
