@@ -3,6 +3,7 @@ import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from 'react-image-cr
 import heic2any from 'heic2any';
 import 'react-image-crop/dist/ReactCrop.css';
 import './ImageEditor.css';
+import { createGradientMaskedOverlayCanvas, type ShapeMask } from './overlayMask';
 
 type OverlayTransform = {
     x: number;
@@ -20,7 +21,8 @@ const convertHeicToJpeg = async (file: File): Promise<File> => {
     // Check if file is HEIC format
     if (file.type === 'image/heic' || file.type === 'image/heif' || file.name.endsWith('.heic') || file.name.endsWith('.heif')) {
         try {
-            const convertedBlob = await heic2any({ blob: file });
+            const conversionResult = await heic2any({ blob: file });
+            const convertedBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
             const jpegFile = new File([convertedBlob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), {
                 type: 'image/jpeg',
             });
@@ -39,7 +41,7 @@ export default function ImageEditor() {
     const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
     const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
     const [overlayTransform, setOverlayTransform] = useState<OverlayTransform>({ x: 0, y: 0, scale: 1 });
-    const [maskShape, setMaskShape] = useState<'none' | 'circle' | 'rectangle'>('none');
+    const [maskShape, setMaskShape] = useState<ShapeMask>('none');
     const [gradientMask, setGradientMask] = useState<boolean>(false);
     const [isDragging, setIsDragging] = useState(false);
     const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
@@ -137,26 +139,18 @@ export default function ImageEditor() {
 
             const { cropX, cropY, cropWidth, cropHeight, destX, destY, destWidth, destHeight } = metrics;
 
-            // Determine the source to draw (raw or gradient-masked off-screen)
+            // Determine the source to draw (raw or shape-aware gradient-masked off-screen)
             let drawSource: CanvasImageSource = overlayImg;
             if (gradientMask) {
-                const offscreen = document.createElement('canvas');
-                offscreen.width = Math.max(1, Math.round(cropWidth));
-                offscreen.height = Math.max(1, Math.round(cropHeight));
-                const offCtx = offscreen.getContext('2d')!;
-                // Draw the cropped overlay
-                offCtx.drawImage(overlayImg, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-                // Apply radial gradient mask via destination-in
-                const gradient = offCtx.createRadialGradient(
-                    cropWidth / 2, cropHeight / 2, 0,
-                    cropWidth / 2, cropHeight / 2, Math.min(cropWidth, cropHeight) / 2
+                drawSource = createGradientMaskedOverlayCanvas(
+                    overlayImg,
+                    cropX,
+                    cropY,
+                    cropWidth,
+                    cropHeight,
+                    maskShape,
+                    overlayOpacity
                 );
-                gradient.addColorStop(0, `rgba(0,0,0,${overlayOpacity})`);
-                gradient.addColorStop(1, 'rgba(0,0,0,0)');
-                offCtx.globalCompositeOperation = 'destination-in';
-                offCtx.fillStyle = gradient;
-                offCtx.fillRect(0, 0, cropWidth, cropHeight);
-                drawSource = offscreen;
             }
 
             ctx.save();
@@ -177,7 +171,7 @@ export default function ImageEditor() {
                 ctx.clip();
             }
 
-            ctx.globalAlpha = overlayOpacity;
+            ctx.globalAlpha = gradientMask ? 1 : overlayOpacity;
             if (gradientMask) {
                 ctx.drawImage(drawSource as HTMLCanvasElement, destX, destY, destWidth, destHeight);
             } else {
@@ -264,6 +258,8 @@ export default function ImageEditor() {
 
     const handleExport = () => {
         if (!canvasRef.current || !bgSrc) return;
+        // Re-render before export so export and preview always use identical mask logic.
+        renderCanvas();
         const dataUrl = canvasRef.current.toDataURL('image/png');
         const link = document.createElement('a');
         link.download = 'composed-image.png';
@@ -374,7 +370,7 @@ export default function ImageEditor() {
                      <div className="mask-controls">
                          <div className="mask-shape-control">
                              <label>Shape Mask</label>
-                             <select value={maskShape} onChange={(e) => setMaskShape(e.target.value as 'none' | 'circle' | 'rectangle')}>
+                             <select value={maskShape} onChange={(e) => setMaskShape(e.target.value as ShapeMask)}>
                                  <option value="none">None</option>
                                  <option value="circle">Circle</option>
                                  <option value="rectangle">Rectangle</option>
