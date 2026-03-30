@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from 'react-image-crop';
+import heic2any from 'heic2any';
 import 'react-image-crop/dist/ReactCrop.css';
 import './ImageEditor.css';
 
@@ -15,6 +16,24 @@ const OVERLAY_SCALE_STEP = 0.01;
 
 const clampScale = (value: number) => Math.min(MAX_OVERLAY_SCALE, Math.max(MIN_OVERLAY_SCALE, value));
 
+const convertHeicToJpeg = async (file: File): Promise<File> => {
+    // Check if file is HEIC format
+    if (file.type === 'image/heic' || file.type === 'image/heif' || file.name.endsWith('.heic') || file.name.endsWith('.heif')) {
+        try {
+            const convertedBlob = await heic2any({ blob: file });
+            const jpegFile = new File([convertedBlob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), {
+                type: 'image/jpeg',
+            });
+            return jpegFile;
+        } catch (error) {
+            console.error('Failed to convert HEIC:', error);
+            // Return original file if conversion fails
+            return file;
+        }
+    }
+    return file;
+};
+
 export default function ImageEditor() {
     const [bgSrc, setBgSrc] = useState<string | null>(null);
     const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
@@ -24,6 +43,8 @@ export default function ImageEditor() {
     const [gradientMask, setGradientMask] = useState<boolean>(false);
     const [isDragging, setIsDragging] = useState(false);
     const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
+    const [isBgConverting, setIsBgConverting] = useState<boolean>(false);
+    const [isOverlayConverting, setIsOverlayConverting] = useState<boolean>(false);
 
     const [crop, setCrop] = useState<Crop>();
     const [completedCrop, setCompletedCrop] = useState<Crop | null>(null);
@@ -35,16 +56,26 @@ export default function ImageEditor() {
 
     const onBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            if (bgSrc) URL.revokeObjectURL(bgSrc);
-            setBgSrc(URL.createObjectURL(e.target.files[0]));
+            const file = e.target.files[0];
+            setIsBgConverting(true);
+            convertHeicToJpeg(file).then((convertedFile) => {
+                if (bgSrc) URL.revokeObjectURL(bgSrc);
+                setBgSrc(URL.createObjectURL(convertedFile));
+                setIsBgConverting(false);
+            });
         }
     };
 
     const onOverlayUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            if (overlaySrc) URL.revokeObjectURL(overlaySrc);
-            setOverlaySrc(URL.createObjectURL(e.target.files[0]));
-            setOverlayTransform({ x: 0, y: 0, scale: 1 });
+            const file = e.target.files[0];
+            setIsOverlayConverting(true);
+            convertHeicToJpeg(file).then((convertedFile) => {
+                if (overlaySrc) URL.revokeObjectURL(overlaySrc);
+                setOverlaySrc(URL.createObjectURL(convertedFile));
+                setOverlayTransform({ x: 0, y: 0, scale: 1 });
+                setIsOverlayConverting(false);
+            });
         }
     };
 
@@ -245,15 +276,17 @@ export default function ImageEditor() {
             <header className="editor-header">
                 <h2>Photo Composer</h2>
                 <div className="controls-row">
-                    <label className="upload-btn">
-                        Upload Background
-                        <input type="file" accept="image/*" onChange={onBgUpload} hidden />
+                    <label className="upload-btn" style={{ opacity: isBgConverting ? 0.6 : 1, cursor: isBgConverting ? 'progress' : 'pointer' }}>
+                        {isBgConverting ? <span className="spinner-inline"></span> : null}
+                        {isBgConverting ? 'Converting...' : 'Upload Background'}
+                        <input type="file" accept="image/*" onChange={onBgUpload} hidden disabled={isBgConverting} />
                     </label>
-                    <label className="upload-btn">
-                        Upload Overlay
-                        <input type="file" accept="image/*" onChange={onOverlayUpload} hidden />
+                    <label className="upload-btn" style={{ opacity: isOverlayConverting ? 0.6 : 1, cursor: isOverlayConverting ? 'progress' : 'pointer' }}>
+                        {isOverlayConverting ? <span className="spinner-inline"></span> : null}
+                        {isOverlayConverting ? 'Converting...' : 'Upload Overlay'}
+                        <input type="file" accept="image/*" onChange={onOverlayUpload} hidden disabled={isOverlayConverting} />
                     </label>
-                    <button className="export-btn" onClick={handleExport} disabled={!bgSrc}>
+                    <button className="export-btn" onClick={handleExport} disabled={!bgSrc || isBgConverting || isOverlayConverting}>
                         Export PNG
                     </button>
                 </div>
