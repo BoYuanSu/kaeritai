@@ -145,12 +145,30 @@
     gap: 0.8rem;
 }
 
+.scale-control {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
 .opacity-control label {
     font-size: 0.95rem;
     color: #ccc;
 }
 
+.scale-control label {
+    font-size: 0.95rem;
+    color: #ccc;
+}
+
 .opacity-control input[type="range"] {
+    width: 100%;
+    accent-color: #ff8a00;
+    cursor: pointer;
+}
+
+.scale-control input[type="range"] {
     width: 100%;
     accent-color: #ff8a00;
     cursor: pointer;

@@ -1,11 +1,4 @@
-## ADDED Requirements
-
-### Requirement: Background and Overlay Upload
-The system SHALL allow the user to select and upload two distinct image files: a background image and an overlay image.
-
-#### Scenario: User uploads required images
-- **WHEN** the user selects a background image and an overlay image
-- **THEN** both images are loaded into the editor memory and displayed on the canvas.
+## MODIFIED Requirements
 
 ### Requirement: PNG Export
 The system SHALL allow the user to export the composed canvas (containing the background and overlay images) as a single PNG file that reflects the final overlay transform state.

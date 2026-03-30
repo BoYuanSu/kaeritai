@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Overlay Image Mobility
 The image editor SHALL allow users to move the overlay image freely across the background using pointer events (mouse or touch) while preserving the current overlay scale.

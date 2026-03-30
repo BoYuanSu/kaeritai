@@ -3,11 +3,23 @@ import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from 'react-image-cr
 import 'react-image-crop/dist/ReactCrop.css';
 import './ImageEditor.css';
 
+type OverlayTransform = {
+    x: number;
+    y: number;
+    scale: number;
+};
+
+const MIN_OVERLAY_SCALE = 0.1;
+const MAX_OVERLAY_SCALE = 3;
+const OVERLAY_SCALE_STEP = 0.01;
+
+const clampScale = (value: number) => Math.min(MAX_OVERLAY_SCALE, Math.max(MIN_OVERLAY_SCALE, value));
+
 export default function ImageEditor() {
     const [bgSrc, setBgSrc] = useState<string | null>(null);
     const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
     const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
-    const [overlayPosition, setOverlayPosition] = useState({ x: 0, y: 0 });
+    const [overlayTransform, setOverlayTransform] = useState<OverlayTransform>({ x: 0, y: 0, scale: 1 });
     const [maskShape, setMaskShape] = useState<'none' | 'circle' | 'rectangle'>('none');
     const [gradientMask, setGradientMask] = useState<boolean>(false);
     const [isDragging, setIsDragging] = useState(false);
@@ -19,6 +31,7 @@ export default function ImageEditor() {
     const bgImgRef = useRef<HTMLImageElement>(null);
     const overlayImgRef = useRef<HTMLImageElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const activePointerIdRef = useRef<number | null>(null);
 
     const onBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -31,8 +44,43 @@ export default function ImageEditor() {
         if (e.target.files && e.target.files.length > 0) {
             if (overlaySrc) URL.revokeObjectURL(overlaySrc);
             setOverlaySrc(URL.createObjectURL(e.target.files[0]));
+            setOverlayTransform({ x: 0, y: 0, scale: 1 });
         }
     };
+
+    const getOverlayDrawMetrics = useCallback(
+        (canvas: HTMLCanvasElement, overlayImg: HTMLImageElement, cropArea: Crop) => {
+            if (!cropArea.width || !cropArea.height || !overlayImg.width || !overlayImg.height) {
+                return null;
+            }
+
+            const scaleX = overlayImg.naturalWidth / overlayImg.width;
+            const scaleY = overlayImg.naturalHeight / overlayImg.height;
+
+            const cropX = cropArea.x * scaleX;
+            const cropY = cropArea.y * scaleY;
+            const cropWidth = cropArea.width * scaleX;
+            const cropHeight = cropArea.height * scaleY;
+
+            const scaledWidth = cropWidth * overlayTransform.scale;
+            const scaledHeight = cropHeight * overlayTransform.scale;
+
+            const destX = (canvas.width - scaledWidth) / 2 + overlayTransform.x;
+            const destY = (canvas.height - scaledHeight) / 2 + overlayTransform.y;
+
+            return {
+                cropX,
+                cropY,
+                cropWidth,
+                cropHeight,
+                destX,
+                destY,
+                destWidth: scaledWidth,
+                destHeight: scaledHeight,
+            };
+        },
+        [overlayTransform]
+    );
 
     const renderCanvas = useCallback(() => {
         const bgImg = bgImgRef.current;
@@ -53,23 +101,17 @@ export default function ImageEditor() {
 
         // Draw overlay if exists
         if (overlayImg && completedCrop && completedCrop.width > 0 && completedCrop.height > 0) {
-            const scaleX = overlayImg.naturalWidth / overlayImg.width;
-            const scaleY = overlayImg.naturalHeight / overlayImg.height;
+            const metrics = getOverlayDrawMetrics(canvas, overlayImg, completedCrop);
+            if (!metrics) return;
 
-            const cropX = completedCrop.x * scaleX;
-            const cropY = completedCrop.y * scaleY;
-            const cropWidth = completedCrop.width * scaleX;
-            const cropHeight = completedCrop.height * scaleY;
-
-            const destX = (canvas.width - cropWidth) / 2 + overlayPosition.x;
-            const destY = (canvas.height - cropHeight) / 2 + overlayPosition.y;
+            const { cropX, cropY, cropWidth, cropHeight, destX, destY, destWidth, destHeight } = metrics;
 
             // Determine the source to draw (raw or gradient-masked off-screen)
             let drawSource: CanvasImageSource = overlayImg;
             if (gradientMask) {
                 const offscreen = document.createElement('canvas');
-                offscreen.width = cropWidth;
-                offscreen.height = cropHeight;
+                offscreen.width = Math.max(1, Math.round(cropWidth));
+                offscreen.height = Math.max(1, Math.round(cropHeight));
                 const offCtx = offscreen.getContext('2d')!;
                 // Draw the cropped overlay
                 offCtx.drawImage(overlayImg, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
@@ -91,30 +133,32 @@ export default function ImageEditor() {
             if (maskShape === 'circle') {
                 ctx.beginPath();
                 ctx.ellipse(
-                    destX + cropWidth / 2, destY + cropHeight / 2,
-                    cropWidth / 2, cropHeight / 2,
+                    destX + destWidth / 2,
+                    destY + destHeight / 2,
+                    destWidth / 2,
+                    destHeight / 2,
                     0, 0, Math.PI * 2
                 );
                 ctx.clip();
             } else if (maskShape === 'rectangle') {
                 ctx.beginPath();
-                ctx.rect(destX, destY, cropWidth, cropHeight);
+                ctx.rect(destX, destY, destWidth, destHeight);
                 ctx.clip();
             }
 
             ctx.globalAlpha = overlayOpacity;
             if (gradientMask) {
-                ctx.drawImage(drawSource as HTMLCanvasElement, destX, destY, cropWidth, cropHeight);
+                ctx.drawImage(drawSource as HTMLCanvasElement, destX, destY, destWidth, destHeight);
             } else {
                 ctx.drawImage(
                     overlayImg,
                     cropX, cropY, cropWidth, cropHeight,
-                    destX, destY, cropWidth, cropHeight
+                    destX, destY, destWidth, destHeight
                 );
             }
             ctx.restore();
         }
-    }, [completedCrop, overlayOpacity, overlayPosition, maskShape, gradientMask]);
+    }, [completedCrop, overlayOpacity, maskShape, gradientMask, getOverlayDrawMetrics]);
 
     useEffect(() => {
         renderCanvas();
@@ -132,25 +176,27 @@ export default function ImageEditor() {
         
         const overlayImg = overlayImgRef.current;
         if (!overlayImg) return;
-        
-        const scaleOverlayX = overlayImg.naturalWidth / overlayImg.width;
-        const scaleOverlayY = overlayImg.naturalHeight / overlayImg.height;
-        const cropWidth = completedCrop.width * scaleOverlayX;
-        const cropHeight = completedCrop.height * scaleOverlayY;
-        
-        const destX = (canvas.width - cropWidth) / 2 + overlayPosition.x;
-        const destY = (canvas.height - cropHeight) / 2 + overlayPosition.y;
 
-        if (clickX >= destX && clickX <= destX + cropWidth && 
-            clickY >= destY && clickY <= destY + cropHeight) {
+        const metrics = getOverlayDrawMetrics(canvas, overlayImg, completedCrop);
+        if (!metrics) return;
+
+        const { destX, destY, destWidth, destHeight } = metrics;
+
+        if (clickX >= destX && clickX <= destX + destWidth &&
+            clickY >= destY && clickY <= destY + destHeight) {
             setIsDragging(true);
-            setDragStartPos({ x: clickX - overlayPosition.x, y: clickY - overlayPosition.y });
+            setDragStartPos({
+                x: clickX - canvas.width / 2 - overlayTransform.x,
+                y: clickY - canvas.height / 2 - overlayTransform.y,
+            });
+            activePointerIdRef.current = e.pointerId;
+            canvas.setPointerCapture(e.pointerId);
             e.stopPropagation();
         }
     };
 
     const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-        if (!isDragging || !canvasRef.current) return;
+        if (!isDragging || !canvasRef.current || activePointerIdRef.current !== e.pointerId) return;
         const canvas = canvasRef.current;
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width;
@@ -159,14 +205,30 @@ export default function ImageEditor() {
         const currentX = (e.clientX - rect.left) * scaleX;
         const currentY = (e.clientY - rect.top) * scaleY;
         
-        setOverlayPosition({
-            x: currentX - dragStartPos.x,
-            y: currentY - dragStartPos.y,
-        });
+        setOverlayTransform((prev) => ({
+            ...prev,
+            x: currentX - canvas.width / 2 - dragStartPos.x,
+            y: currentY - canvas.height / 2 - dragStartPos.y,
+        }));
     };
 
-    const handlePointerUp = () => {
-        if (isDragging) setIsDragging(false);
+    const handleScaleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const nextScale = clampScale(parseFloat(e.target.value));
+        setOverlayTransform((prev) => ({
+            ...prev,
+            scale: nextScale,
+        }));
+    };
+
+    const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+        if (activePointerIdRef.current !== e.pointerId) return;
+        if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+            canvasRef.current.releasePointerCapture(e.pointerId);
+        }
+        activePointerIdRef.current = null;
+        if (isDragging) {
+            setIsDragging(false);
+        }
     };
 
     const handleExport = () => {
@@ -214,10 +276,15 @@ export default function ImageEditor() {
                          <canvas 
                              ref={canvasRef} 
                              className="final-canvas" 
-                             style={{ display: bgSrc ? 'block' : 'none', cursor: isDragging ? 'grabbing' : (overlaySrc ? 'grab' : 'default') }}
+                             style={{
+                                 display: bgSrc ? 'block' : 'none',
+                                 cursor: isDragging ? 'grabbing' : (overlaySrc ? 'grab' : 'default'),
+                                 touchAction: 'none',
+                             }}
                              onPointerDown={handlePointerDown}
                              onPointerMove={handlePointerMove}
                              onPointerUp={handlePointerUp}
+                             onPointerCancel={handlePointerUp}
                              onPointerLeave={handlePointerUp}
                          />
                          {!bgSrc && <div className="placeholder">Please upload a background image</div>}
@@ -258,6 +325,17 @@ export default function ImageEditor() {
                              min="0" max="1" step="0.01" 
                              value={overlayOpacity} 
                              onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))} 
+                         />
+                     </div>
+                     <div className="scale-control">
+                         <label>Overlay Scale: {Math.round(overlayTransform.scale * 100)}%</label>
+                         <input
+                             type="range"
+                             min={MIN_OVERLAY_SCALE}
+                             max={MAX_OVERLAY_SCALE}
+                             step={OVERLAY_SCALE_STEP}
+                             value={overlayTransform.scale}
+                             onChange={handleScaleChange}
                          />
                      </div>
                      <div className="mask-controls">
