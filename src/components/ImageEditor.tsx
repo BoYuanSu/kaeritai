@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import './ImageEditor.css';
@@ -8,6 +8,8 @@ export default function ImageEditor() {
     const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
     const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
     const [overlayPosition, setOverlayPosition] = useState({ x: 0, y: 0 });
+    const [maskShape, setMaskShape] = useState<'none' | 'circle' | 'rectangle'>('none');
+    const [gradientMask, setGradientMask] = useState<boolean>(false);
     const [isDragging, setIsDragging] = useState(false);
     const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
 
@@ -32,11 +34,7 @@ export default function ImageEditor() {
         }
     };
 
-    useEffect(() => {
-        renderCanvas();
-    }, [bgSrc, overlaySrc, completedCrop, overlayOpacity, overlayPosition]);
-
-    const renderCanvas = () => {
+    const renderCanvas = useCallback(() => {
         const bgImg = bgImgRef.current;
         const canvas = canvasRef.current;
         const overlayImg = overlayImgRef.current;
@@ -66,14 +64,61 @@ export default function ImageEditor() {
             const destX = (canvas.width - cropWidth) / 2 + overlayPosition.x;
             const destY = (canvas.height - cropHeight) / 2 + overlayPosition.y;
 
+            // Determine the source to draw (raw or gradient-masked off-screen)
+            let drawSource: CanvasImageSource = overlayImg;
+            if (gradientMask) {
+                const offscreen = document.createElement('canvas');
+                offscreen.width = cropWidth;
+                offscreen.height = cropHeight;
+                const offCtx = offscreen.getContext('2d')!;
+                // Draw the cropped overlay
+                offCtx.drawImage(overlayImg, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+                // Apply radial gradient mask via destination-in
+                const gradient = offCtx.createRadialGradient(
+                    cropWidth / 2, cropHeight / 2, 0,
+                    cropWidth / 2, cropHeight / 2, Math.min(cropWidth, cropHeight) / 2
+                );
+                gradient.addColorStop(0, 'rgba(0,0,0,1)');
+                gradient.addColorStop(1, 'rgba(0,0,0,0)');
+                offCtx.globalCompositeOperation = 'destination-in';
+                offCtx.fillStyle = gradient;
+                offCtx.fillRect(0, 0, cropWidth, cropHeight);
+                drawSource = offscreen;
+            }
+
+            ctx.save();
+            // Apply shape mask clipping
+            if (maskShape === 'circle') {
+                ctx.beginPath();
+                ctx.ellipse(
+                    destX + cropWidth / 2, destY + cropHeight / 2,
+                    cropWidth / 2, cropHeight / 2,
+                    0, 0, Math.PI * 2
+                );
+                ctx.clip();
+            } else if (maskShape === 'rectangle') {
+                ctx.beginPath();
+                ctx.rect(destX, destY, cropWidth, cropHeight);
+                ctx.clip();
+            }
+
             ctx.globalAlpha = overlayOpacity;
-            ctx.drawImage(
-                overlayImg,
-                cropX, cropY, cropWidth, cropHeight,
-                destX, destY, cropWidth, cropHeight
-            );
+            if (gradientMask) {
+                ctx.drawImage(drawSource as HTMLCanvasElement, destX, destY, cropWidth, cropHeight);
+            } else {
+                ctx.drawImage(
+                    overlayImg,
+                    cropX, cropY, cropWidth, cropHeight,
+                    destX, destY, cropWidth, cropHeight
+                );
+            }
+            ctx.restore();
         }
-    };
+    }, [completedCrop, overlayOpacity, overlayPosition, maskShape, gradientMask]);
+
+    useEffect(() => {
+        renderCanvas();
+    }, [renderCanvas]);
 
     const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
         if (!completedCrop || !overlaySrc || !canvasRef.current) return;
@@ -214,6 +259,26 @@ export default function ImageEditor() {
                              value={overlayOpacity} 
                              onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))} 
                          />
+                     </div>
+                     <div className="mask-controls">
+                         <div className="mask-shape-control">
+                             <label>Shape Mask</label>
+                             <select value={maskShape} onChange={(e) => setMaskShape(e.target.value as 'none' | 'circle' | 'rectangle')}>
+                                 <option value="none">None</option>
+                                 <option value="circle">Circle</option>
+                                 <option value="rectangle">Rectangle</option>
+                             </select>
+                         </div>
+                         <div className="gradient-mask-control">
+                             <label>
+                                 <input
+                                     type="checkbox"
+                                     checked={gradientMask}
+                                     onChange={(e) => setGradientMask(e.target.checked)}
+                                 />
+                                 Gradient Transparency
+                             </label>
+                         </div>
                      </div>
                  </div>
                  )}
