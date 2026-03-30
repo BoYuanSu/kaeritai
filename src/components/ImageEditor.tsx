@@ -7,6 +7,9 @@ export default function ImageEditor() {
     const [bgSrc, setBgSrc] = useState<string | null>(null);
     const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
     const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
+    const [overlayPosition, setOverlayPosition] = useState({ x: 0, y: 0 });
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
 
     const [crop, setCrop] = useState<Crop>();
     const [completedCrop, setCompletedCrop] = useState<Crop | null>(null);
@@ -31,7 +34,7 @@ export default function ImageEditor() {
 
     useEffect(() => {
         renderCanvas();
-    }, [bgSrc, overlaySrc, completedCrop, overlayOpacity]);
+    }, [bgSrc, overlaySrc, completedCrop, overlayOpacity, overlayPosition]);
 
     const renderCanvas = () => {
         const bgImg = bgImgRef.current;
@@ -60,8 +63,8 @@ export default function ImageEditor() {
             const cropWidth = completedCrop.width * scaleX;
             const cropHeight = completedCrop.height * scaleY;
 
-            const destX = (canvas.width - cropWidth) / 2;
-            const destY = (canvas.height - cropHeight) / 2;
+            const destX = (canvas.width - cropWidth) / 2 + overlayPosition.x;
+            const destY = (canvas.height - cropHeight) / 2 + overlayPosition.y;
 
             ctx.globalAlpha = overlayOpacity;
             ctx.drawImage(
@@ -70,6 +73,55 @@ export default function ImageEditor() {
                 destX, destY, cropWidth, cropHeight
             );
         }
+    };
+
+    const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+        if (!completedCrop || !overlaySrc || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const clickX = (e.clientX - rect.left) * scaleX;
+        const clickY = (e.clientY - rect.top) * scaleY;
+        
+        const overlayImg = overlayImgRef.current;
+        if (!overlayImg) return;
+        
+        const scaleOverlayX = overlayImg.naturalWidth / overlayImg.width;
+        const scaleOverlayY = overlayImg.naturalHeight / overlayImg.height;
+        const cropWidth = completedCrop.width * scaleOverlayX;
+        const cropHeight = completedCrop.height * scaleOverlayY;
+        
+        const destX = (canvas.width - cropWidth) / 2 + overlayPosition.x;
+        const destY = (canvas.height - cropHeight) / 2 + overlayPosition.y;
+
+        if (clickX >= destX && clickX <= destX + cropWidth && 
+            clickY >= destY && clickY <= destY + cropHeight) {
+            setIsDragging(true);
+            setDragStartPos({ x: clickX - overlayPosition.x, y: clickY - overlayPosition.y });
+            e.stopPropagation();
+        }
+    };
+
+    const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+        if (!isDragging || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const currentX = (e.clientX - rect.left) * scaleX;
+        const currentY = (e.clientY - rect.top) * scaleY;
+        
+        setOverlayPosition({
+            x: currentX - dragStartPos.x,
+            y: currentY - dragStartPos.y,
+        });
+    };
+
+    const handlePointerUp = () => {
+        if (isDragging) setIsDragging(false);
     };
 
     const handleExport = () => {
@@ -114,7 +166,15 @@ export default function ImageEditor() {
                                  crossOrigin="anonymous" 
                              />
                          )}
-                         <canvas ref={canvasRef} className="final-canvas" style={{ display: bgSrc ? 'block' : 'none' }} />
+                         <canvas 
+                             ref={canvasRef} 
+                             className="final-canvas" 
+                             style={{ display: bgSrc ? 'block' : 'none', cursor: isDragging ? 'grabbing' : (overlaySrc ? 'grab' : 'default') }}
+                             onPointerDown={handlePointerDown}
+                             onPointerMove={handlePointerMove}
+                             onPointerUp={handlePointerUp}
+                             onPointerLeave={handlePointerUp}
+                         />
                          {!bgSrc && <div className="placeholder">Please upload a background image</div>}
                      </div>
                  </div>
