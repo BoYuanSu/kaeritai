@@ -42,6 +42,7 @@ export default function ImageEditor() {
     const [bgSrc, setBgSrc] = useState<string | null>(null);
     const [overlaySrc, setOverlaySrc] = useState<string | null>(null);
     const [overlayOpacity, setOverlayOpacity] = useState<number>(0.5);
+    const [pendingOpacity, setPendingOpacity] = useState<number | null>(null);
     const [overlayTransform, setOverlayTransform] = useState<OverlayTransform>({ x: 0, y: 0, scale: 1 });
     const [maskShape, setMaskShape] = useState<ShapeMask>('none');
     const [gradientMask, setGradientMask] = useState<boolean>(false);
@@ -59,6 +60,7 @@ export default function ImageEditor() {
     const dragStartPosRef = useRef({ x: 0, y: 0 });
     const pendingDragPositionRef = useRef<{ x: number; y: number } | null>(null);
     const dragRafRef = useRef<number | null>(null);
+    const opacityDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const gradientMaskCacheRef = useRef<{ key: string | null; canvas: HTMLCanvasElement | null }>({
         key: null,
         canvas: null,
@@ -133,6 +135,9 @@ export default function ImageEditor() {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
+        // Use pending opacity if being adjusted, otherwise use committed opacity
+        const effectiveOpacity = pendingOpacity !== null ? pendingOpacity : overlayOpacity;
+
         // Set dimensions to match background
         canvas.width = bgImg.naturalWidth;
         canvas.height = bgImg.naturalHeight;
@@ -158,7 +163,7 @@ export default function ImageEditor() {
                     cropWidth,
                     cropHeight,
                     maskShape,
-                    overlayOpacity,
+                    effectiveOpacity,
                 ].join('|');
 
                 if (gradientMaskCacheRef.current.key !== cacheKey || !gradientMaskCacheRef.current.canvas) {
@@ -171,7 +176,7 @@ export default function ImageEditor() {
                             cropWidth,
                             cropHeight,
                             maskShape,
-                            overlayOpacity
+                            effectiveOpacity
                         ),
                     };
                 }
@@ -197,7 +202,7 @@ export default function ImageEditor() {
                 ctx.clip();
             }
 
-            ctx.globalAlpha = gradientMask ? 1 : overlayOpacity;
+            ctx.globalAlpha = gradientMask ? 1 : effectiveOpacity;
             if (gradientMask) {
                 ctx.drawImage(drawSource as HTMLCanvasElement, destX, destY, destWidth, destHeight);
             } else {
@@ -209,7 +214,7 @@ export default function ImageEditor() {
             }
             ctx.restore();
         }
-    }, [completedCrop, overlayOpacity, maskShape, gradientMask, getOverlayDrawMetrics, overlaySrc]);
+    }, [completedCrop, pendingOpacity, overlayOpacity, maskShape, gradientMask, getOverlayDrawMetrics, overlaySrc]);
 
     useEffect(() => {
         renderCanvas();
@@ -219,6 +224,9 @@ export default function ImageEditor() {
         return () => {
             if (dragRafRef.current !== null) {
                 cancelAnimationFrame(dragRafRef.current);
+            }
+            if (opacityDebounceRef.current !== null) {
+                clearTimeout(opacityDebounceRef.current);
             }
         };
     }, []);
@@ -293,6 +301,24 @@ export default function ImageEditor() {
             ...prev,
             scale: nextScale,
         }));
+    };
+
+    const handleOpacityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const newOpacity = parseFloat(e.target.value);
+        // Update pending opacity for immediate UI feedback
+        setPendingOpacity(newOpacity);
+
+        // Clear existing debounce timer
+        if (opacityDebounceRef.current !== null) {
+            clearTimeout(opacityDebounceRef.current);
+        }
+
+        // Set debounce timer to commit opacity change after 300ms
+        opacityDebounceRef.current = setTimeout(() => {
+            setOverlayOpacity(newOpacity);
+            setPendingOpacity(null);
+            opacityDebounceRef.current = null;
+        }, 300);
     };
 
     const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -437,12 +463,12 @@ export default function ImageEditor() {
                         />
                      </ReactCrop>
                      <div className="opacity-control">
-                         <label>Overlay Opacity: {Math.round(overlayOpacity * 100)}%</label>
+                         <label>Overlay Opacity: {Math.round((pendingOpacity !== null ? pendingOpacity : overlayOpacity) * 100)}%</label>
                          <input 
                              type="range" 
                              min="0" max="1" step="0.01" 
-                             value={overlayOpacity} 
-                             onChange={(e) => setOverlayOpacity(parseFloat(e.target.value))} 
+                             value={pendingOpacity !== null ? pendingOpacity : overlayOpacity} 
+                             onChange={handleOpacityChange} 
                          />
                      </div>
                      <div className="scale-control">
