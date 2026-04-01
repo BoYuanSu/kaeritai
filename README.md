@@ -1,6 +1,6 @@
 # 快回家 (Kaeritai) - 圖片合成工具
 
-一個簡單直觀的圖片合成工具，靈感來自 [@fukuroupiyopiyo](https://x.com/fukuroupiyopiyo) 的推文。
+一個簡單直觀的圖片合成工具，靈感來自 [@fukuroupiyopiyo](https://x.com/fukuroupiyopiyo/status/2037379711152857435) 的推文。
 
 **線上 Demo:** https://boyuansu.github.io/kaeritai/
 
